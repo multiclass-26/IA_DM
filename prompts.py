@@ -1,0 +1,41 @@
+"""Shim de retrocompatibilidade. Redireciona para `ai_dm.llm.prompts`."""
+
+from ai_dm.llm.prompts import (
+    COMBAT_NARRATOR_PROMPT,
+    COMBAT_USER_TEMPLATE,
+    DUNGEON_THEMES,
+    LOCK_MECHANICS_PROMPT,
+    MASTER_STYLES,
+    ROOM_GENERATOR_PROMPT,
+    ROOM_NARRATION_SCHEMA,
+    ROOM_TYPES_SEQUENCE,
+    SYSTEM_PROMPT,
+    build_combat_narration_system,
+    build_combat_narration_user,
+    build_lock_info,
+    build_room_prompt,
+    build_system_prompt,
+    build_world_state,
+    get_room_sequence,
+    get_style_prompt,
+)
+
+__all__ = [
+    "COMBAT_NARRATOR_PROMPT",
+    "COMBAT_USER_TEMPLATE",
+    "DUNGEON_THEMES",
+    "LOCK_MECHANICS_PROMPT",
+    "MASTER_STYLES",
+    "ROOM_GENERATOR_PROMPT",
+    "ROOM_NARRATION_SCHEMA",
+    "ROOM_TYPES_SEQUENCE",
+    "SYSTEM_PROMPT",
+    "build_combat_narration_system",
+    "build_combat_narration_user",
+    "build_lock_info",
+    "build_room_prompt",
+    "build_system_prompt",
+    "build_world_state",
+    "get_room_sequence",
+    "get_style_prompt",
+]

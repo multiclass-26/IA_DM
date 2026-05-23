@@ -1,0 +1,9 @@
+ts,provider,model,call_type,elapsed_s,success,prompt_chars,response_chars,error
+2026-04-03 14:12:19,gemini,gemini-2.5-flash-lite,story,2.75,True,6077,1059,
+2026-04-03 14:13:29,gemini,gemini-2.5-flash-lite,story,2.256,True,7546,973,
+2026-04-03 14:14:19,gemini,gemini-2.5-flash-lite,story,3.26,True,8679,1108,
+2026-04-03 14:14:49,gemini,gemini-2.5-flash-lite,story,2.384,True,9713,1067,
+2026-04-03 14:15:21,gemini,gemini-2.5-flash-lite,story,2.847,True,10785,1301,
+2026-04-03 14:16:15,gemini,gemini-2.5-flash-lite,story,2.418,True,12092,1069,
+2026-04-03 14:17:00,gemini,gemini-2.5-flash-lite,story,2.618,True,13167,1468,
+2026-04-03 14:18:00,gemini,gemini-2.5-flash-lite,story,3.123,True,14759,1511,
