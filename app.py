@@ -31,6 +31,7 @@ from dungeon_map import (
     generate_dungeon_map, render_map_svg, get_lock_status_text,
     DungeonMap, DungeonRoom,
 )
+from ai_dm.llm.memory import MemoryStream, estimate_importance
 
 # ============================================================
 # CONFIG
@@ -211,6 +212,7 @@ def _deserialize_dungeon_map(data: dict | None) -> DungeonMap | None:
 
 
 def _build_save_payload() -> dict:
+    _sync_memory_stream_from_messages()
     return {
         "game_phase": st.session_state.game_phase,
         "character": _serialize_character(st.session_state.character),
@@ -237,6 +239,8 @@ def _build_save_payload() -> dict:
         "story_summary": st.session_state.story_summary,
         "summary_cursor": st.session_state.summary_cursor,
         "llm_metrics": st.session_state.llm_metrics,
+        "world_state": _get_memory_stream().to_dict(),
+        "memory_cursor": st.session_state.memory_cursor,
         "combat_key_reward": st.session_state.get("combat_key_reward", ""),
         "combat_selected_target": st.session_state.get("combat_selected_target", 0),
         "combat_last_summary": st.session_state.get("combat_last_summary", ""),
@@ -292,6 +296,8 @@ def load_game_state(file_path: Path = SAVE_FILE) -> tuple[bool, str]:
         st.session_state.story_summary = data.get("story_summary", "")
         st.session_state.summary_cursor = data.get("summary_cursor", 0)
         st.session_state.llm_metrics = data.get("llm_metrics", [])
+        st.session_state.world_state = MemoryStream.from_dict(data.get("world_state"))
+        st.session_state.memory_cursor = data.get("memory_cursor", 0)
         st.session_state["combat_key_reward"] = data.get("combat_key_reward", "")
         st.session_state["combat_selected_target"] = data.get("combat_selected_target", 0)
         st.session_state["combat_last_summary"] = data.get("combat_last_summary", "")
@@ -371,6 +377,8 @@ def init_session_state():
         "story_summary": "",
         "summary_cursor": 0,
         "llm_metrics": [],
+        "world_state": MemoryStream(),
+        "memory_cursor": 0,
         "combat_key_reward": "",
         "combat_selected_target": 0,
         "combat_last_summary": "",
@@ -388,6 +396,49 @@ init_session_state()
 # ============================================================
 # LLM HELPER
 # ============================================================
+
+IMPORTANT_MEMORY_MARKERS = (
+    "chave", "tranc", "boss", "chefe", "prision", "mapa", "segredo",
+    "tesouro", "altar", "necromante", "portal", "artefato", "npc",
+)
+
+
+def _get_memory_stream() -> MemoryStream:
+    stream = st.session_state.get("world_state")
+    if isinstance(stream, MemoryStream):
+        return stream
+    restored = MemoryStream.from_dict(stream if isinstance(stream, dict) else None)
+    st.session_state.world_state = restored
+    return restored
+
+
+def _memory_kind_for_message(role: str, content: str) -> str | None:
+    lowered = content.lower()
+    if role == "user":
+        return "decision"
+    if role == "assistant":
+        return "fact"
+    if role == "system" and any(marker in lowered for marker in IMPORTANT_MEMORY_MARKERS):
+        return "fact"
+    return None
+
+
+def _sync_memory_stream_from_messages() -> None:
+    stream = _get_memory_stream()
+    messages = st.session_state.get("messages", [])
+    cursor = min(int(st.session_state.get("memory_cursor", 0)), len(messages))
+    for message in messages[cursor:]:
+        role = str(message.get("role", ""))
+        content = (message.get("content", "") or "").strip()
+        kind = _memory_kind_for_message(role, content)
+        if kind:
+            stream.remember(
+                content,
+                kind=kind,
+                importance=estimate_importance(content, kind),
+                source=role,
+            )
+    st.session_state.memory_cursor = len(messages)
 
 def _provider_config() -> tuple[str, str, str | None, str | None]:
     provider = st.session_state.llm_provider
@@ -562,6 +613,7 @@ def _maybe_update_story_summary():
         )
         st.session_state.story_summary = summary
         st.session_state.summary_cursor = cutoff
+        _get_memory_stream().remember_reflection(summary, source="story_summary")
     except Exception as exc:
         elapsed = time.perf_counter() - start_time
         _record_llm_metric(
@@ -807,6 +859,7 @@ def get_ai_response(user_message: str, system_override: str = None) -> str:
         char = st.session_state.character
         dmap = st.session_state.dungeon_map
         locks = dmap.locks if dmap else []
+        _sync_memory_stream_from_messages()
 
         system = system_override or build_system_prompt(
             char,
@@ -814,6 +867,8 @@ def get_ai_response(user_message: str, system_override: str = None) -> str:
             st.session_state.total_rooms,
             master_style=st.session_state.master_style,
             locks=locks,
+            world_state=_get_memory_stream(),
+            memory_query=user_message,
         )
         system = system + "\n\n" + _build_authoritative_state()
 
@@ -1313,6 +1368,8 @@ def render_character_creation():
                     char, 1, total_rooms,
                     master_style=st.session_state.master_style,
                     locks=dmap.locks,
+                    world_state=_get_memory_stream(),
+                    memory_query=f"primeira sala {room_name} {st.session_state.dungeon_theme}",
                 ),
             )
 

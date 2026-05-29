@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_dm.llm.memory import MemoryStream, WorldState
+
 MASTER_STYLES = {
     "narrativo": {
         "name": "Narrativo",
@@ -280,10 +282,25 @@ def build_lock_info(locks: list[dict] | None) -> str:
     return LOCK_MECHANICS_PROMPT.format(lock_info="\n".join(lines))
 
 
-def build_world_state(world: dict | None) -> str:
-    """Renderiza o WorldState como bloco compacto para injeção no prompt."""
+def build_world_state(world: dict | MemoryStream | WorldState | None, query: str = "") -> str:
+    """Renderiza memoria narrativa no prompt.
+
+    Compatibilidade:
+    - dict legado (`npcs/facts/decisoes`) => dump simples
+    - dict/objeto com memory stream => retrieval contextual
+    """
     if not world:
         return ""
+
+    if isinstance(world, WorldState):
+        world = world.to_dict()
+
+    if isinstance(world, MemoryStream):
+        return world.render_for_prompt(query=query)
+
+    if isinstance(world, dict) and world.get("entries"):
+        return MemoryStream.from_dict(world).render_for_prompt(query=query)
+
     parts = ["<MEMORIA_DO_MUNDO>"]
     npcs = world.get("npcs") or []
     facts = world.get("facts") or []
@@ -311,6 +328,7 @@ def build_system_prompt(
     master_style: str = "classico",
     locks: list[dict] | None = None,
     world_state: dict | None = None,
+    memory_query: str = "",
 ) -> str:
     return SYSTEM_PROMPT.format(
         character_info=character.character_sheet(),
@@ -320,7 +338,7 @@ def build_system_prompt(
         max_hp=character.max_hp,
         master_style=get_style_prompt(master_style),
         lock_info=build_lock_info(locks),
-        world_state=build_world_state(world_state),
+        world_state=build_world_state(world_state, query=memory_query),
     )
 
 
@@ -335,6 +353,7 @@ def build_room_prompt(
     locks: list[dict] | None = None,
     extra_context: str = "",
     world_state: dict | None = None,
+    memory_query: str = "",
 ) -> str:
     return ROOM_GENERATOR_PROMPT.format(
         room_number=room_number,
@@ -348,7 +367,7 @@ def build_room_prompt(
         master_style=get_style_prompt(master_style),
         lock_info=build_lock_info(locks),
         extra_context=extra_context,
-        world_state=build_world_state(world_state),
+        world_state=build_world_state(world_state, query=memory_query),
     )
 
 
