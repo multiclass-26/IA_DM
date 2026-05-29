@@ -44,6 +44,13 @@ st.set_page_config(
 )
 
 from ai_dm.ui.styles import inject as _inject_styles
+from ai_dm.ui.combat_view import (
+    render_action_panel,
+    render_combat_hud,
+    render_combat_journal,
+    render_enemy_cards,
+    render_round_summary,
+)
 _inject_styles()
 
 
@@ -231,6 +238,8 @@ def _build_save_payload() -> dict:
         "summary_cursor": st.session_state.summary_cursor,
         "llm_metrics": st.session_state.llm_metrics,
         "combat_key_reward": st.session_state.get("combat_key_reward", ""),
+        "combat_selected_target": st.session_state.get("combat_selected_target", 0),
+        "combat_last_summary": st.session_state.get("combat_last_summary", ""),
     }
 
 
@@ -284,6 +293,8 @@ def load_game_state(file_path: Path = SAVE_FILE) -> tuple[bool, str]:
         st.session_state.summary_cursor = data.get("summary_cursor", 0)
         st.session_state.llm_metrics = data.get("llm_metrics", [])
         st.session_state["combat_key_reward"] = data.get("combat_key_reward", "")
+        st.session_state["combat_selected_target"] = data.get("combat_selected_target", 0)
+        st.session_state["combat_last_summary"] = data.get("combat_last_summary", "")
         st.session_state.connection_last_ok = 0.0
         st.session_state.connection_fingerprint = ""
         return True, "Jogo carregado com sucesso."
@@ -361,6 +372,8 @@ def init_session_state():
         "summary_cursor": 0,
         "llm_metrics": [],
         "combat_key_reward": "",
+        "combat_selected_target": 0,
+        "combat_last_summary": "",
         "connection_last_ok": 0.0,
         "connection_fingerprint": "",
     }
@@ -1338,6 +1351,10 @@ def render_playing():
     char = st.session_state.character
     dmap = st.session_state.dungeon_map
 
+    if st.session_state.game_phase == "combat":
+        render_combat()
+        return
+
     # --- Dialog do mapa (tela cheia) ---
     if st.session_state.get("show_map") and st.session_state.has_map and dmap:
         _show_map_dialog(dmap)
@@ -1366,10 +1383,6 @@ def render_playing():
                     st.markdown(msg["content"])
 
     st.markdown("---")
-
-    if st.session_state.game_phase == "combat":
-        render_combat()
-        return
 
     col_input, col_actions = st.columns([3, 1])
 
@@ -1575,6 +1588,8 @@ def start_combat(is_boss: bool = False):
     st.session_state.combat_monsters = monsters
     st.session_state.combat_turn = "player"
     st.session_state.combat_log = []
+    st.session_state["combat_selected_target"] = 0
+    st.session_state["combat_last_summary"] = ""
     st.session_state.game_phase = "combat"
     st.session_state["combat_key_reward"] = key_in_room
 
@@ -1618,104 +1633,96 @@ def render_combat():
         end_combat_defeat()
         return
 
-    st.markdown("### Inimigos")
-    for m in monsters:
-        if m.is_alive():
-            hp_pct = m.hp / m.max_hp
-            col1, col2 = st.columns([2, 3])
-            with col1:
-                st.markdown(f"**{m.name}** -- CA: {m.ac}")
-            with col2:
-                st.progress(hp_pct, text=f"HP: {m.hp}/{m.max_hp}")
-        else:
-            st.markdown(f"~~{m.name}~~ -- Derrotado")
+    raw_target = st.session_state.get("combat_selected_target", 0)
+    try:
+        target_idx = int(raw_target)
+    except (TypeError, ValueError):
+        target_idx = 0
+    if target_idx < 0 or target_idx >= len(alive_monsters):
+        target_idx = 0
+    st.session_state["combat_selected_target"] = target_idx
+
+    render_combat_hud(char, monsters, st.session_state.current_room, st.session_state.total_rooms)
+
+    col_state, col_actions = st.columns([3, 2])
+    with col_state:
+        render_enemy_cards(alive_monsters, st.session_state.get("combat_selected_target", 0))
+    with col_actions:
+        action, target = render_action_panel(char, alive_monsters)
 
     st.markdown("---")
+    render_round_summary(st.session_state.get("combat_last_summary", ""), st.session_state.combat_log)
+    render_combat_journal(st.session_state.messages)
 
     if st.session_state.combat_turn == "player":
-        st.markdown("### Seu Turno")
-        target_idx = 0
-        if len(alive_monsters) > 1:
-            target_idx = st.selectbox(
-                "Escolha o alvo:",
-                range(len(alive_monsters)),
-                format_func=lambda i: f"{alive_monsters[i].name} (HP: {alive_monsters[i].hp}/{alive_monsters[i].max_hp})"
-            )
-
-        special_label = CLASS_DATA[char.char_class]["special"].split("**")[1] if "**" in CLASS_DATA[char.char_class]["special"] else "Especial"
-        can_use = char.special_uses > 0
-
-        st.caption("Acoes ofensivas")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("Atacar", type="primary", use_container_width=True):
-                execute_player_turn(alive_monsters[target_idx], use_special=False)
-
-        with col2:
-            if st.button(
-                f"{special_label} ({char.special_uses})",
-                use_container_width=True,
-                disabled=not can_use
-            ):
-                execute_player_turn(alive_monsters[target_idx], use_special=True)
-
-        st.caption("Acoes defensivas")
-        col3, col4 = st.columns(2)
-
-        with col3:
-            if st.button("Pocao", use_container_width=True):
-                result = use_potion(char)
-                st.session_state.messages.append({"role": "system", "content": result})
-                execute_monster_turns()
-
-        with col4:
-            if st.button("Fugir", use_container_width=True):
-                check = roll_check(char.mod("DES"), 12)
-                if check["success"]:
-                    st.session_state.messages.append({
-                        "role": "system",
-                        "content": f"**Fuga bem-sucedida!** {check['description']}"
-                    })
-                    st.session_state.game_phase = "playing"
-                    st.session_state.combat_monsters = []
-                else:
-                    st.session_state.messages.append({
-                        "role": "system",
-                        "content": f"**Fuga falhou!** {check['description']}\nOs monstros atacam!"
-                    })
-                    execute_monster_turns()
-                st.rerun()
+        if action == "attack" and target:
+            execute_player_turn(target, use_special=False)
+        elif action == "special" and target:
+            execute_player_turn(target, use_special=True)
+        elif action == "potion":
+            result = use_potion(char)
+            st.session_state.messages.append({"role": "system", "content": result})
+            execute_monster_turns(player_result=f"### Sua ação\n**Poção:**\n{result}")
+        elif action == "sheet":
+            st.session_state.messages.append({"role": "system", "content": char.character_sheet()})
+            st.rerun()
+        elif action == "flee":
+            check = roll_check(char.mod("DES"), 12)
+            if check["success"]:
+                success_msg = f"**Fuga bem-sucedida!** {check['description']}"
+                st.session_state.messages.append({"role": "system", "content": success_msg})
+                st.session_state["combat_last_summary"] = f"### Sua ação\n{success_msg}"
+                st.session_state.game_phase = "playing"
+                st.session_state.combat_monsters = []
+                st.session_state.combat_log = []
+            else:
+                fail_msg = f"**Fuga falhou!** {check['description']}\nOs monstros atacam!"
+                st.session_state.messages.append({"role": "system", "content": fail_msg})
+                execute_monster_turns(player_result=f"### Sua ação\n{fail_msg}")
+                return
+            st.rerun()
 
 
 def execute_player_turn(target: Monster, use_special: bool):
     char = st.session_state.character
+    st.session_state.combat_turn = "monsters"
     result = resolve_player_attack(char, target, use_special)
     st.session_state.messages.append({"role": "system", "content": f"**Seu ataque:**\n{result}"})
     st.session_state.combat_log.append(result)
+    st.session_state["combat_last_summary"] = f"### Sua ação\n{result}"
 
     alive = [m for m in st.session_state.combat_monsters if m.is_alive()]
     if not alive:
         end_combat_victory()
         return
 
-    execute_monster_turns()
+    execute_monster_turns(player_result=f"### Sua ação\n{result}")
 
 
-def execute_monster_turns():
+def execute_monster_turns(player_result: str = ""):
     char = st.session_state.character
     monsters = st.session_state.combat_monsters
+    monster_results = []
 
     for m in monsters:
         if m.is_alive() and char.is_alive():
             result = resolve_monster_attack(m, char)
             st.session_state.messages.append({"role": "system", "content": result})
             st.session_state.combat_log.append(result)
+            monster_results.append(result)
+
+    parts = []
+    if player_result:
+        parts.append(player_result)
+    if monster_results:
+        parts.append("### Resposta inimiga\n" + "\n\n".join(monster_results))
+    st.session_state["combat_last_summary"] = "\n\n".join(parts)
 
     if not char.is_alive():
         end_combat_defeat()
         return
 
+    st.session_state.combat_turn = "player"
     st.rerun()
 
 
@@ -1760,6 +1767,8 @@ HP: **{char.hp}/{char.max_hp}**
     st.session_state.game_phase = "playing"
     st.session_state.combat_monsters = []
     st.session_state.combat_log = []
+    st.session_state["combat_selected_target"] = 0
+    st.session_state["combat_last_summary"] = ""
     st.session_state["combat_key_reward"] = ""
     st.rerun()
 
@@ -1780,6 +1789,8 @@ def end_combat_defeat():
 """
     st.session_state.messages.append({"role": "system", "content": defeat_msg})
     st.session_state.game_phase = "game_over"
+    st.session_state["combat_selected_target"] = 0
+    st.session_state["combat_last_summary"] = ""
     st.rerun()
 
 
